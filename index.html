@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HRV Webapp (Single-File)</title>
+<style>
+  :root{
+    --bg:#0b1020;--panel:#111836;--muted:#7c8aa5;--text:#e6eefc;--acc:#14b8a6;--warn:#f59e0b;--danger:#ef4444;--line:#34b4f8;
+    --radius:16px;
+  }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:linear-gradient(180deg,#070b18 0%, #0c1430 100%);color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+  .wrap{max-width:840px;margin:0 auto;padding:16px 16px 32px}
+  h1{margin:0 0 8px;font-size:20px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid rgba(255,255,255,.06);border-radius:var(--radius);padding:14px}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  .btn{appearance:none;border:0;border-radius:12px;background:#1b254a;color:var(--text);padding:10px 12px;cursor:pointer}
+  .btn:hover{filter:brightness(1.1)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-prim{background:#1c3e5e}
+  .btn-go{background:#198754}
+  .btn-warn{background:#a16419}
+  .btn-danger{background:#8b1e27}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#1b254a;color:var(--muted);font-size:12px}
+  .kv{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .kv b{font-weight:600}
+  label{font-size:13px;color:var(--muted)}
+  input,select{background:#0e1530;color:var(--text);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px 10px}
+  .split{display:grid;grid-template-columns: 1fr;gap:12px}
+  @media (min-width:840px){ .split{grid-template-columns: 1.2fr .8fr} }
+  #gl{display:block;width:100%;height:320px;border-radius:12px;background:#08101f}
+  .wide{grid-column:1 / -1}
+  .pacerTrack{height:8px;background:#0e1530;border-radius:999px;overflow:hidden}
+  .pacerFill{height:100%;width:0;background:linear-gradient(90deg,#0ea5e9,#22d3ee)}
+  .muted{color:var(--muted)}
+  .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .kpis .card{padding:10px}
+  .mono{font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+  .hr{height:1px;background:rgba(255,255,255,.08);margin:10px 0}
+  .note{font-size:12px;color:#9fb2d2}
+  .footer{opacity:.7;font-size:12px;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="row" style="align-items:center;justify-content:space-between">
+    <div>
+      <h1>HRV • Web Bluetooth</h1>
+      <div id="sub" class="muted"></div>
+    </div>
+    <div class="kv">
+      <span class="badge" id="devLabel">—</span>
+      <span class="badge">HR: <b id="hrVal">—</b> bpm</span>
+      <span class="badge">SQI: <b id="sqiVal">—</b>%</span>
+    </div>
+  </header>
+
+  <div class="grid" style="margin-top:12px">
+    <button id="btnConnect" class="btn btn-prim card">🔗 <span data-i="connect">Connetti fascia</span></button>
+    <button id="btnNew" class="btn card">🆕 <span data-i="new">Nuova sessione</span></button>
+    <button id="btnStart" class="btn btn-go card" disabled>▶️ <span data-i="start">Start</span></button>
+    <button id="btnPause" class="btn btn-warn card" disabled>⏸️ <span data-i="pause">Pausa</span></button>
+    <button id="btnStop" class="btn btn-danger card" disabled>⏹️ <span data-i="stop">Stop</span></button>
+  </div>
+
+  <div class="split" style="margin-top:12px">
+    <section class="card wide">
+      <canvas id="gl"></canvas>
+      <div class="row" style="align-items:center;justify-content:space-between;margin-top:8px">
+        <div class="kv">
+          <label for="durSel" data-i="duration">Durata</label>
+          <select id="durSel">
+            <option value="300000">5’</option>
+            <option value="600000" selected>10’</option>
+            <option value="1200000">20’</option>
+            <option value="0">∞</option>
+          </select>
+        </div>
+        <div class="kv">
+          <label for="rate" data-i="pacer_rate">Pacer (bpm resp.)</label>
+          <input id="rate" type="number" min="4.5" max="7.0" step="0.1" value="6.0" class="mono" style="width:84px">
+        </div>
+      </div>
+      <div class="pacerTrack" style="margin-top:10px"><div id="pacerFill" class="pacerFill"></div></div>
+      <div class="note" style="margin-top:8px" id="tip"></div>
+    </section>
+
+    <aside class="card">
+      <div class="kpis">
+        <div class="card"><div class="muted">Mean RR</div><div class="mono" id="mRR">—</div></div>
+        <div class="card"><div class="muted">Mean HR</div><div class="mono" id="mHR">—</div></div>
+        <div class="card"><div class="muted">SDNN</div><div class="mono" id="sdnn">—</div></div>
+        <div class="card"><div class="muted">RMSSD</div><div class="mono" id="rmssd">—</div></div>
+        <div class="card"><div class="muted">pNN50</div><div class="mono" id="pnn50">—</div></div>
+        <div class="card"><div class="muted">Durata</div><div class="mono" id="dur">—</div></div>
+      </div>
+      <div class="hr"></div>
+      <div class="row">
+        <button id="btnCsv" class="btn" disabled>⬇️ CSV</button>
+        <button id="btnJson" class="btn" disabled>⬇️ JSON</button>
+      </div>
+      <div class="hr"></div>
+      <div id="status" class="muted"></div>
+    </aside>
+  </div>
+
+  <div class="footer">Wellness only – Non è un dispositivo medico.</div>
+</div>
+
+<script type="module">
+/* =========================
+   Localizzazione
+========================= */
+const L = {
+  it: {
+    connect:"Connetti fascia", new:"Nuova sessione", start:"Start", pause:"Pausa", stop:"Stop",
+    duration:"Durata", pacer_rate:"Pacer (bpm resp.)",
+    needChrome:"Richiede Android Chrome con Web Bluetooth attivo.",
+    tip:"Suggerimento: resta fermo, allenta le spalle. Prova una respirazione a ritmo costante.",
+    confirmStop:"Terminare la sessione?",
+    tooShort:"⚠︎ Segmento troppo breve per metriche time-domain (≥60s).",
+  },
+  en: {
+    connect:"Connect strap", new:"New session", start:"Start", pause:"Pause", stop:"Stop",
+    duration:"Duration", pacer_rate:"Pacer (breaths/min)",
+    needChrome:"Requires Android Chrome with Web Bluetooth enabled.",
+    tip:"Tip: sit still, relax shoulders. Try a steady breathing pace.",
+    confirmStop:"End session?",
+    tooShort:"⚠︎ Segment too short for time-domain metrics (≥60s).",
+  }
+};
+const lang = (navigator.language||'en').toLowerCase().startsWith('it') ? 'it' : 'en';
+document.querySelectorAll('[data-i]').forEach(el=>{ el.textContent = L[lang][el.dataset.i]||el.textContent; });
+document.getElementById('sub').textContent = L[lang].needChrome;
+document.getElementById('tip').textContent = L[lang].tip;
+
+/* =========================
+   WebGL minimal line plot
+========================= */
+class GlLine {
+  constructor(canvas){
+    this.c = canvas;
+    this.gl = canvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:false});
+    if(!this.gl) throw new Error('WebGL unavailable');
+    this.maxPts = 4096;
+    this.data = new Float32Array(this.maxPts*2);
+    this.count = 0;
+    this._build();
+    addEventListener('resize',()=>this._resize());
+    this._resize();
+  }
+  _build(){
+    const gl=this.gl;
+    const vs=`
+      attribute vec2 a_pos;
+      void main(){ gl_Position=vec4(a_pos,0.,1.); }
+    `;
+    const fs=`
+      precision mediump float;
+      void main(){ gl_FragColor=vec4(${hexToRGB('34b4f8')},1.0); }
+    `;
+    const prog=this._prog(vs,fs); gl.useProgram(prog);
+    this.prog=prog; this.a_pos=gl.getAttribLocation(prog,'a_pos');
+    this.vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,this.vbo);
+    gl.bufferData(gl.ARRAY_BUFFER,this.data.byteLength,gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(this.a_pos);
+    gl.vertexAttribPointer(this.a_pos,2,gl.FLOAT,false,0,0);
+  }
+  _prog(vsSrc,fsSrc){
+    const gl=this.gl;
+    const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+      if(!gl.getShaderParameter(o,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o;};
+    const vs=sh(gl.VERTEX_SHADER,vsSrc), fs=sh(gl.FRAGMENT_SHADER,fsSrc);
+    const p=gl.createProgram(); gl.attachShader(p,vs); gl.attachShader(p,fs); gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p;
+  }
+  _resize(){
+    const dpr=Math.max(1,window.devicePixelRatio||1);
+    const w=this.c.clientWidth*dpr, h=this.c.clientHeight*dpr;
+    if(this.c.width!==w||this.c.height!==h){ this.c.width=w; this.c.height=h; this.gl.viewport(0,0,w,h); }
+  }
+  push(hr){
+    if(!Number.isFinite(hr)) return;
+    if(this.count < this.maxPts) this.count++;
+    else this.data.copyWithin(0,2,this.count*2);
+    for(let i=0;i<this.count;i++){
+      const x=(i/(this.maxPts-1))*2-1; this.data[i*2]=x;
+    }
+    const y = clamp((hr-90)/50,-1,1);
+    this.data[(this.count-1)*2+1]=y;
+  }
+  draw(){
+    const gl=this.gl;
+    gl.clearColor(0.03,0.06,0.12,1); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindBuffer(gl.ARRAY_BUFFER,this.vbo);
+    gl.bufferSubData(gl.ARRAY_BUFFER,0,this.data);
+    gl.useProgram(this.prog);
+    gl.vertexAttribPointer(this.a_pos,2,gl.FLOAT,false,0,0);
+    gl.drawArrays(gl.LINE_STRIP,0,this.count);
+  }
+}
+function hexToRGB(hex){
+  const n=parseInt(hex,16); const r=((n>>16)&255)/255, g=((n>>8)&255)/255, b=(n&255)/255;
+  return `${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)}`;
+}
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+
+/* =========================
+   Inline Worker (artefatti, HR, SQI, metriche)
+========================= */
+const workerCode = `
+let seq=0;
+const rrBuf=[]; // {tMono, rr_ms, artifact}
+const W_MS=30000;
+
+function med(arr){ if(!arr.length) return null;
+  const s=[...arr].sort((a,b)=>a-b); const i=Math.floor(s.length/2);
+  return s.length%2?s[i]:(s[i-1]+s[i])*0.5;
+}
+function isArtifact(rr, m){ if(rr<300||rr>2000) return true; if(m==null) return false;
+  return Math.abs(rr-m) > m*0.2;
+}
+function sqi(now){
+  const from=now-W_MS; const w=rrBuf.filter(x=>x.tMono>=from);
+  if(w.length<4) return 0;
+  const art=w.filter(x=>x.artifact).length;
+  return Math.max(0, Math.round(100 - (art/w.length)*100));
+}
+function finalize(){
+  const valid=rrBuf.filter(x=>!x.artifact);
+  const rr=valid.map(x=>x.rr_ms);
+  const dur = rrBuf.length? (rrBuf[rrBuf.length-1].tMono - rrBuf[0].tMono) : 0;
+  const mets={};
+  if (dur>=60000 && rr.length>=4){
+    const mean = rr.reduce((a,b)=>a+b,0)/rr.length;
+    const diffs = rr.slice(1).map((x,i)=>x-rr[i]);
+    const rmssd = Math.sqrt(diffs.reduce((a,b)=>a+b*b,0)/diffs.length);
+    const m = mean, varr = rr.reduce((a,b)=>a+(b-m)*(b-m),0)/rr.length;
+    const sdnn = Math.sqrt(varr);
+    const pnn50 = diffs.length? (100*diffs.filter(d=>Math.abs(d)>50).length/diffs.length) : 0;
+    mets.meanRR=Math.round(mean);
+    mets.meanHR=Math.round(60000/mean);
+    mets.RMSSD=Math.round(rmssd);
+    mets.SDNN=Math.round(sdnn);
+    mets.pNN50=Math.round(pnn50);
+  } else {
+    mets.warning='SHORT';
+  }
+  return {metrics:mets,durationMs:dur, artifacts: rrBuf.filter(x=>x.artifact).length, rrStream: rrBuf};
+}
+
+onmessage = (e)=>{
+  const {type,payload}=e.data;
+  if(type==='push'){
+    const {tMono, rrList}=payload;
+    for (const rr of rrList){
+      const recent = rrBuf.slice(-7).map(x=>x.rr_ms);
+      const m = med(recent);
+      const art = isArtifact(rr,m);
+      rrBuf.push({tMono, rr_ms: rr, artifact: art, seq: seq++});
+      const minT = tMono - 10*60*1000;
+      while(rrBuf.length && rrBuf[0].tMono<minT) rrBuf.shift();
+    }
+    for(let i=rrBuf.length-1;i>=0;i--){
+      if(!rrBuf[i].artifact){
+        const hr = Math.round(60000/rrBuf[i].rr_ms);
+        postMessage({type:'rt', payload:{hr, sqi:sqi(tMono)}});
+        break;
+      }
+    }
+  }
+  if(type==='finalize'){
+    const out = finalize();
+    postMessage({type:'final', payload: out});
+  }
+}
+`;
+const worker = new Worker(URL.createObjectURL(new Blob([workerCode], {type:'text/javascript'})));
+
+/* =========================
+   BLE layer (0x180D/0x2A37)
+========================= */
+const HR_SERVICE = 0x180D, HR_MEAS = 0x2A37;
+// Optional vendor path for eSense if it doesn't expose 0x180D:
+// const ESENSE_SERVICE = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'; // example
+// const ESENSE_MEAS   = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx';
+
+class BleHR {
+  constructor(){ this.dev=null; this.server=null; this.char=null; this.onRR=()=>{}; }
+  async connect(){
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{services:[HR_SERVICE]},{namePrefix:'Polar'},{namePrefix:'eSense'}],
+      optionalServices: [HR_SERVICE]
+    });
+    this.dev=device;
+    this.dev.addEventListener('gattserverdisconnected', ()=>{ /* manual retry MVP */ });
+    this.server = await device.gatt.connect();
+    const svc = await this.server.getPrimaryService(HR_SERVICE);
+    this.char = await svc.getCharacteristic(HR_MEAS);
+    await this.char.startNotifications();
+    this.char.addEventListener('characteristicvaluechanged', e=>this._parse(e.target.value));
+    return device;
+  }
+  _parse(dv){
+    const flags = dv.getUint8(0);
+    const hr16 = flags & 0x01;
+    const rrPresent = flags & 0x10;
+    let idx=1;
+    const hr = hr16? dv.getUint16(idx,true) : dv.getUint8(idx);
+    idx += hr16?2:1;
+    const rrList=[];
+    if(rrPresent){
+      while(idx+1<dv.byteLength){
+        const rr1024 = dv.getUint16(idx,true); idx+=2;
+        rrList.push( rr1024 * 1000 / 1024 );
+      }
+    }
+    const tMono = performance.now();
+    if(rrList.length) this.onRR({tMono, rrList});
+  }
+}
+
+/* =========================
+   Pacer (triangular progress)
+========================= */
+class Pacer {
+  constructor(fillEl){ this.fillEl=fillEl; this.rate=6.0; this._raf=null; this._t0=0; }
+  setRate(v){ this.rate=clamp(parseFloat(v)||6.0,4.5,7.0); }
+  start(){ this._t0=performance.now(); const loop=()=>{
+      const dt=performance.now()-this._t0;
+      const cyc=60000/this.rate, ph=(dt%cyc)/cyc;
+      const tri= ph<0.5 ? (ph*2) : (2-ph*2);
+      this.fillEl.style.width = (tri*100).toFixed(1)+'%';
+      this._raf=requestAnimationFrame(loop);
+    }; this._raf=requestAnimationFrame(loop);
+  }
+  stop(){ if(this._raf) cancelAnimationFrame(this._raf); this._raf=null; }
+  nudgeByScore(_delta){/* hook for adaptive biofeedback */}
+}
+
+/* =========================
+   Controller / UI wiring
+========================= */
+const $=s=>document.querySelector(s);
+const gl = new GlLine($('#gl'));
+const ble = new BleHR();
+const pacer = new Pacer($('#pacerFill'));
+
+let running=false, haveSession=false;
+let session = null; // {id,start,end,deviceName,rr:[],settings,metrics}
+let anim=null;
+
+function drawLoop(){
+  if(!running) return;
+  gl.draw();
+  anim=requestAnimationFrame(drawLoop);
+}
+function setStatus(msg){ $('#status').textContent = msg; }
+function setEnabled(el, v){ el.disabled = !v; }
+
+function download(blob, name){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* Worker events */
+worker.onmessage = (e)=>{
+  const {type,payload}=e.data;
+  if(type==='rt'){
+    if(Number.isFinite(payload.hr)){
+      $('#hrVal').textContent = payload.hr;
+      gl.push(payload.hr);
+    }
+    if(Number.isFinite(payload.sqi)){
+      $('#sqiVal').textContent = payload.sqi;
+    }
+  }
+  if(type==='final'){
+    const {metrics,durationMs,rrStream} = payload;
+    if(metrics.warning==='SHORT'){
+      setStatus((lang==='it')? L.it.tooShort : L.en.tooShort);
+    }
+    $('#mRR').textContent  = metrics.meanRR ?? '—';
+    $('#mHR').textContent  = metrics.meanHR ?? '—';
+    $('#sdnn').textContent = metrics.SDNN ?? '—';
+    $('#rmssd').textContent= metrics.RMSSD ?? '—';
+    $('#pnn50').textContent= metrics.pNN50 ?? '—';
+    $('#dur').textContent  = Math.round(durationMs/1000)+'s';
+    session.metrics = metrics;
+    session.durationMs = durationMs;
+    session.rr = rrStream;
+    setEnabled($('#btnCsv'), true);
+    setEnabled($('#btnJson'), true);
+    setStatus('OK');
+  }
+};
+
+/* Buttons */
+$('#btnConnect').addEventListener('click', async ()=>{
+  try{
+    if(!('bluetooth' in navigator)){ alert(L[lang].needChrome); return; }
+    const dev=await ble.connect();
+    $('#devLabel').textContent = dev.name || 'Heart Rate Device';
+    setStatus('Connected. Waiting RR…');
+    ble.onRR = ({tMono, rrList})=>{
+      worker.postMessage({type:'push', payload:{tMono, rrList}});
+    };
+  }catch(err){ setStatus('BLE error: '+err.message); }
+});
+
+$('#btnNew').addEventListener('click', ()=>{
+  session = {
+    id: 'S'+Date.now(),
+    start: Date.now(),
+    end: null,
+    deviceName: $('#devLabel').textContent,
+    rr: [],
+    settings: { pacerRate: parseFloat($('#rate').value) },
+    metrics: null
+  };
+  haveSession=true;
+  setEnabled($('#btnStart'), true);
+  setEnabled($('#btnPause'), false);
+  setEnabled($('#btnStop'), false);
+  setEnabled($('#btnCsv'), false);
+  setEnabled($('#btnJson'), false);
+  setStatus('Session ready.');
+});
+
+$('#btnStart').addEventListener('click', ()=>{
+  if(!haveSession){ setStatus('Create a session first.'); return; }
+  running=true;
+  pacer.setRate($('#rate').value); pacer.start();
+  setEnabled($('#btnStart'), false);
+  setEnabled($('#btnPause'), true);
+  setEnabled($('#btnStop'), true);
+  drawLoop();
+  const dur=parseInt($('#durSel').value,10)||0;
+  if(dur>0){
+    clearTimeout(window._autoStop);
+    window._autoStop = setTimeout(()=> $('#btnStop').click(), dur);
+  }
+});
+
+$('#btnPause').addEventListener('click', ()=>{
+  running=false; pacer.stop();
+  setEnabled($('#btnStart'), true);
+  setEnabled($('#btnPause'), false);
+  setStatus('Paused.');
+});
+
+$('#btnStop').addEventListener('click', ()=>{
+  if(!haveSession) return;
+  if(!confirm(L[lang].confirmStop)) return;
+  running=false; pacer.stop();
+  setEnabled($('#btnStart'), false);
+  setEnabled($('#btnPause'), false);
+  setEnabled($('#btnStop'), false);
+  session.end=Date.now();
+  setStatus('Computing metrics…');
+  worker.postMessage({type:'finalize'});
+});
+
+$('#rate').addEventListener('change', e=> pacer.setRate(e.target.value));
+
+$('#btnCsv').addEventListener('click', ()=>{
+  if(!session || !session.rr) return;
+  const rows = ['timestamp_ms,rr_ms,artifact_flag']
+    .concat(session.rr.map(x=>`${Math.round(x.tMono)},${Math.round(x.rr_ms)},${x.artifact?1:0}`))
+    .join('\n');
+  download(new Blob([rows],{type:'text/csv'}), `${session.id}.csv`);
+});
+
+$('#btnJson').addEventListener('click', ()=>{
+  if(!session) return;
+  const payload={ meta:{
+      id:session.id,start:session.start,end:session.end,device:session.deviceName,
+      settings:session.settings, durationMs:session.durationMs
+    }, metrics: session.metrics, rr: session.rr };
+  download(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}), `${session.id}.json`);
+});
+
+(function idleDraw(){
+  gl.draw(); requestAnimationFrame(idleDraw);
+})();
+
+(function initUI(){
+  setEnabled($('#btnStart'), false);
+  setEnabled($('#btnPause'), false);
+  setEnabled($('#btnStop'), false);
+  setEnabled($('#btnCsv'), false);
+  setEnabled($('#btnJson'), false);
+})();
+</script>
+</body>
+</html>
